@@ -3,6 +3,8 @@ const pool = require('../config/db')
 const createBooking = async (req, res) => {
   const client = await pool.connect()
   try {
+        console.log('📥 Received booking data:', JSON.stringify(req.body, null, 2))
+
     const {
       car_id,
       pickup_location_id,
@@ -12,7 +14,10 @@ const createBooking = async (req, res) => {
       duration_type,
       addon_ids,
       promo_code,
-      payment_method
+      payment_method,
+      selected_addons = [],
+      base_rent_amount = 0,
+      addon_total = 0
     } = req.body
 
     const user_id = req.user.id
@@ -73,23 +78,34 @@ const createBooking = async (req, res) => {
     }
 
     const totalHours = Math.ceil(diffMs / (1000 * 60 * 60))
-    let total_price = 0
+    let calculatedBaseRent = 0
+    let priceBreakdown = []
 
     if (duration_type === 'hourly') {
       if (totalHours < 24) {
-        total_price = totalHours * hourlyRate
+        calculatedBaseRent = totalHours * hourlyRate
+        priceBreakdown.push({ type: 'hourly', hours: totalHours, amount: calculatedBaseRent })
       } else {
         const days = Math.floor(totalHours / 24)
         const leftoverHours = Math.ceil(totalHours - days * 24)
-        total_price = (days * dailyRate) + (leftoverHours * hourlyRate)
+        calculatedBaseRent = (days * dailyRate) + (leftoverHours * hourlyRate)
+        priceBreakdown.push({ type: 'daily', days: days, amount: days * dailyRate })
+        if (leftoverHours > 0) {
+          priceBreakdown.push({ type: 'hourly', hours: leftoverHours, amount: leftoverHours * hourlyRate })
+        }
       }
     } else if (duration_type === 'daily') {
       if (totalHours < 24) {
-        total_price = totalHours * hourlyRate
+        calculatedBaseRent = totalHours * hourlyRate
+        priceBreakdown.push({ type: 'hourly', hours: totalHours, amount: calculatedBaseRent })
       } else {
         const days = Math.floor(totalHours / 24)
         const leftoverHours = Math.ceil(totalHours - days * 24)
-        total_price = (days * dailyRate) + (leftoverHours * hourlyRate)
+        calculatedBaseRent = (days * dailyRate) + (leftoverHours * hourlyRate)
+        priceBreakdown.push({ type: 'daily', days: days, amount: days * dailyRate })
+        if (leftoverHours > 0) {
+          priceBreakdown.push({ type: 'hourly', hours: leftoverHours, amount: leftoverHours * hourlyRate })
+        }
       }
     } else if (duration_type === 'weekly') {
       if (totalHours < 168) {
@@ -100,47 +116,74 @@ const createBooking = async (req, res) => {
       const remAfterWeeks = totalHours - (weeks * 168)
       const remDays = Math.floor(remAfterWeeks / 24)
       const remHours = Math.ceil(remAfterWeeks - (remDays * 24))
-      total_price = (weeks * weeklyRate) + (remDays * dailyRate) + (remHours * hourlyRate)
+      calculatedBaseRent = (weeks * weeklyRate) + (remDays * dailyRate) + (remHours * hourlyRate)
+      priceBreakdown.push({ type: 'weekly', weeks: weeks, amount: weeks * weeklyRate })
+      if (remDays > 0) priceBreakdown.push({ type: 'daily', days: remDays, amount: remDays * dailyRate })
+      if (remHours > 0) priceBreakdown.push({ type: 'hourly', hours: remHours, amount: remHours * hourlyRate })
     }
 
-    // 4. Add addon prices
+    // Use provided base_rent or calculated one
+    const finalBaseRent = base_rent_amount || calculatedBaseRent
+    let finalAddonTotal = addon_total
+    let finalTotalPrice = finalBaseRent + finalAddonTotal
+
+    // 4. Get addon details if provided
     let addonRows = []
+    let addonsList = []
     if (addon_ids && addon_ids.length > 0) {
       const addonRes = await client.query(
         'SELECT * FROM add_ons WHERE id = ANY($1) AND is_active = true',
         [addon_ids]
       )
       addonRows = addonRes.rows
-      const addonTotal = addonRows.reduce((sum, a) => sum + parseFloat(a.price), 0)
-      total_price += addonTotal
+      finalAddonTotal = addonRows.reduce((sum, a) => sum + parseFloat(a.price), 0)
+      finalTotalPrice = finalBaseRent + finalAddonTotal
+      
+      // Store addons list for breakdown
+      addonsList = addonRows.map(a => ({
+        addon_id: a.id,
+        addon_name: a.name,
+        price: parseFloat(a.price)
+      }))
     }
 
     // 5. Apply promo code if provided
     let promo_id = null
+    let promoDiscount = 0
+    let promoCodeUsed = null
+    let finalPriceAfterPromo = finalTotalPrice
+
     if (promo_code) {
       const promoRes = await client.query(
         `SELECT * FROM promo_codes
          WHERE code = $1
            AND is_active = true
+           AND start_date <= NOW()
            AND (expiry IS NULL OR expiry > NOW())
            AND (max_uses IS NULL OR used_count < max_uses)`,
-        [promo_code]
+        [promo_code.toUpperCase()]
       )
+      
       if (promoRes.rows.length === 0) {
         await client.query('ROLLBACK')
         return res.status(400).json({ message: 'Invalid or expired promo code' })
       }
+      
       const promo = promoRes.rows[0]
-      if (promo.min_amount && total_price < parseFloat(promo.min_amount)) {
+      promoCodeUsed = promo.code
+      
+      if (promo.min_amount && finalTotalPrice < parseFloat(promo.min_amount)) {
         await client.query('ROLLBACK')
         return res.status(400).json({ message: `Minimum order amount is ₹${promo.min_amount}` })
       }
+      
       if (promo.discount_type === 'flat') {
-        total_price -= parseFloat(promo.discount_value)
+        promoDiscount = parseFloat(promo.discount_value)
       } else {
-        total_price -= (total_price * parseFloat(promo.discount_value)) / 100
+        promoDiscount = (finalTotalPrice * parseFloat(promo.discount_value)) / 100
       }
-      total_price = Math.max(0, total_price)
+      
+      finalPriceAfterPromo = Math.max(0, finalTotalPrice - promoDiscount)
       promo_id = promo.id
 
       // Increment used count
@@ -150,22 +193,49 @@ const createBooking = async (req, res) => {
       )
     }
 
-    // 6. Create booking
+    // Build complete booking breakdown
+    const bookingBreakdown = {
+      base_rent: finalBaseRent,
+      addons: addonsList,
+      addon_total: finalAddonTotal,
+      promo_code: promoCodeUsed,
+      promo_discount: promoDiscount,
+      subtotal: finalTotalPrice,
+      final_amount: finalPriceAfterPromo,
+      price_breakdown: priceBreakdown,
+      duration: {
+        type: duration_type,
+        total_hours: totalHours,
+        pickup: pickup_datetime,
+        dropoff: dropoff_datetime
+      }
+    }
+
+    // 6. Create booking with all details
     const bookingRes = await client.query(
       `INSERT INTO bookings
-        (user_id, car_id, pickup_location_id, dropoff_location_id, pickup_datetime, dropoff_datetime, duration_type, total_price, promo_id, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')
+        (user_id, car_id, pickup_location_id, dropoff_location_id, 
+         pickup_datetime, dropoff_datetime, duration_type, 
+         base_rent_amount, addon_total, promo_discount, 
+         final_paid_amount, promo_id, promo_code_used, 
+         total_price, booking_breakdown, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'pending')
        RETURNING *`,
-      [user_id, car_id, pickup_location_id, dropoff_location_id, pickup_datetime, dropoff_datetime, duration_type, total_price, promo_id]
+      [user_id, car_id, pickup_location_id, dropoff_location_id, 
+       pickup_datetime, dropoff_datetime, duration_type,
+       finalBaseRent, finalAddonTotal, promoDiscount,
+       finalPriceAfterPromo, promo_id, promoCodeUsed,
+       finalPriceAfterPromo, JSON.stringify(bookingBreakdown)]
     )
     const booking = bookingRes.rows[0]
 
-    // 7. Insert booking addons
+    // 7. Insert booking addons with full details
     if (addonRows.length > 0) {
       for (const addon of addonRows) {
         await client.query(
-          'INSERT INTO booking_addons (booking_id, addon_id, price_at_time) VALUES ($1, $2, $3)',
-          [booking.id, addon.id, addon.price]
+          `INSERT INTO booking_addons (booking_id, addon_id, price_at_time, addon_name, addon_description)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [booking.id, addon.id, addon.price, addon.name, addon.description]
         )
       }
     }
@@ -174,12 +244,18 @@ const createBooking = async (req, res) => {
     await client.query(
       `INSERT INTO payments (booking_id, amount, method, status)
        VALUES ($1, $2, $3, 'pending')`,
-      [booking.id, total_price, payment_method]
+      [booking.id, finalPriceAfterPromo, payment_method]
     )
 
     await client.query('COMMIT')
 
-    res.status(201).json({ message: 'Booking created successfully', booking })
+    res.status(201).json({ 
+      message: 'Booking created successfully', 
+      booking: {
+        ...booking,
+        breakdown: bookingBreakdown
+      }
+    })
   } catch (error) {
     await client.query('ROLLBACK')
     console.error('Booking error:', error)
@@ -196,7 +272,8 @@ const getMyBookings = async (req, res) => {
               c.make, c.model, c.year, c.category,
               ci.image_url as primary_image,
               l.name as pickup_location_name,
-              p.method as payment_method, p.status as payment_status
+              p.method as payment_method, p.status as payment_status,
+              COALESCE(p.amount, b.final_paid_amount) as paid_amount
        FROM bookings b
        JOIN cars c ON b.car_id = c.id
        LEFT JOIN car_images ci ON ci.car_id = c.id AND ci.is_primary = true
@@ -206,8 +283,36 @@ const getMyBookings = async (req, res) => {
        ORDER BY b.created_at DESC`,
       [req.user.id]
     )
-    res.json(result.rows)
+    
+    // Get addons for each booking
+    const bookingsWithAddons = await Promise.all(
+      result.rows.map(async (booking) => {
+        const addonsRes = await pool.query(
+          `SELECT ba.*, a.name as addon_name, a.description
+           FROM booking_addons ba
+           LEFT JOIN add_ons a ON ba.addon_id = a.id
+           WHERE ba.booking_id = $1`,
+          [booking.id]
+        )
+        return {
+          ...booking,
+          addons: addonsRes.rows,
+          // Ensure frontend gets the correct final amount
+          display_amount: booking.final_paid_amount || booking.total_price,
+          breakdown: booking.booking_breakdown || {
+            base_rent: booking.base_rent_amount,
+            addon_total: booking.addon_total,
+            promo_discount: booking.promo_discount,
+            final_amount: booking.final_paid_amount,
+            promo_code: booking.promo_code_used
+          }
+        }
+      })
+    )
+    
+    res.json(bookingsWithAddons)
   } catch (error) {
+    console.error('getMyBookings error:', error)
     res.status(500).json({ message: error.message })
   }
 }
@@ -226,9 +331,11 @@ const cancelBooking = async (req, res) => {
     }
     res.json({ message: 'Booking cancelled', booking: result.rows[0] })
   } catch (error) {
+    console.error('cancelBooking error:', error)
     res.status(500).json({ message: error.message })
   }
 }
+
 const validatePromo = async (req, res) => {
   try {
     const { promo_code, total_price } = req.body
@@ -236,9 +343,10 @@ const validatePromo = async (req, res) => {
       `SELECT * FROM promo_codes
        WHERE code = $1
          AND is_active = true
+         AND start_date <= NOW()
          AND (expiry IS NULL OR expiry > NOW())
          AND (max_uses IS NULL OR used_count < max_uses)`,
-      [promo_code]
+      [promo_code.toUpperCase()]
     )
     if (promoRes.rows.length === 0) {
       return res.status(400).json({ message: 'Invalid or expired promo code' })
@@ -253,12 +361,26 @@ const validatePromo = async (req, res) => {
     } else {
       discount = (total_price * parseFloat(promo.discount_value)) / 100
     }
-    res.json({ discount, message: 'Promo applied successfully' })
+    // Ensure discount doesn't exceed total
+    discount = Math.min(discount, total_price)
+    
+    res.json({ 
+      discount, 
+      message: 'Promo applied successfully',
+      promo: {
+        code: promo.code,
+        discount_type: promo.discount_type,
+        discount_value: promo.discount_value,
+        min_amount: promo.min_amount
+      }
+    })
   } catch (error) {
+    console.error('validatePromo error:', error)
     res.status(500).json({ message: error.message })
   }
 }
-// ADMIN: get all bookings
+
+// ADMIN: get all bookings with full details
 const getAllBookings = async (req, res) => {
   try {
     const { status, page = 1, limit = 20 } = req.query
@@ -282,11 +404,14 @@ const getAllBookings = async (req, res) => {
         b.*,
         u.name AS user_name,
         u.email AS user_email,
-        c.make, c.model, c.year,
+        u.phone AS user_phone,
+        c.make, c.model, c.year, c.category,
         l.name AS pickup_location_name,
         p.method AS payment_method,
         p.status AS payment_status,
-        p.amount AS payment_amount
+        p.amount AS payment_amount,
+        p.transaction_id,
+        p.paid_at
        FROM bookings b
        JOIN users u ON b.user_id = u.id
        JOIN cars c ON b.car_id = c.id
@@ -298,14 +423,39 @@ const getAllBookings = async (req, res) => {
       [...values, limit, offset]
     )
 
+    // Get addons for each booking
+    const bookingsWithAddons = await Promise.all(
+      result.rows.map(async (booking) => {
+        const addonsRes = await pool.query(
+          `SELECT ba.*, a.name as addon_name, a.description
+           FROM booking_addons ba
+           JOIN add_ons a ON ba.addon_id = a.id
+           WHERE ba.booking_id = $1`,
+          [booking.id]
+        )
+        return {
+          ...booking,
+          addons: addonsRes.rows,
+          display_amount: booking.final_paid_amount || booking.total_price,
+          breakdown: booking.booking_breakdown || {
+            base_rent: booking.base_rent_amount,
+            addon_total: booking.addon_total,
+            promo_discount: booking.promo_discount,
+            final_amount: booking.final_paid_amount,
+            promo_code: booking.promo_code_used
+          }
+        }
+      })
+    )
+
     res.json({
-      bookings: result.rows,
+      bookings: bookingsWithAddons,
       total: parseInt(countResult.rows[0].total),
       page: parseInt(page),
       totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit),
     })
   } catch (error) {
-    console.error(error)
+    console.error('getAllBookings error:', error)
     res.status(500).json({ message: error.message })
   }
 }
@@ -316,7 +466,7 @@ const updateBookingStatus = async (req, res) => {
     const { id } = req.params
     const { status } = req.body
 
-    const allowed = ['pending', 'confirmed', 'completed', 'cancelled']
+    const allowed = ['pending', 'confirmed', 'active', 'completed', 'cancelled']
     if (!allowed.includes(status)) {
       return res.status(400).json({ message: 'Invalid status value' })
     }
@@ -332,10 +482,87 @@ const updateBookingStatus = async (req, res) => {
 
     res.json({ message: 'Status updated', booking: result.rows[0] })
   } catch (error) {
-    console.error(error)
+    console.error('updateBookingStatus error:', error)
     res.status(500).json({ message: error.message })
   }
 }
-module.exports = { createBooking, getMyBookings, cancelBooking, validatePromo ,  getAllBookings,
-  updateBookingStatus}
 
+// Get booking details by ID (for invoice/breakdown)
+const getBookingById = async (req, res) => {
+  try {
+    const { id } = req.params
+    
+    const result = await pool.query(
+      `SELECT b.*,
+              u.name AS user_name, u.email AS user_email, u.phone AS user_phone,
+              c.make, c.model, c.year, c.category,
+              l.name AS pickup_location_name,
+              p.method AS payment_method, p.status AS payment_status, p.amount AS payment_amount
+       FROM bookings b
+       JOIN users u ON b.user_id = u.id
+       JOIN cars c ON b.car_id = c.id
+       LEFT JOIN locations l ON b.pickup_location_id = l.id
+       LEFT JOIN payments p ON p.booking_id = b.id
+       WHERE b.id = $1`,
+      [id]
+    )
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Booking not found' })
+    }
+    
+    const booking = result.rows[0]
+    
+    // Get addons
+    const addonsRes = await pool.query(
+      `SELECT ba.*, a.name as addon_name, a.description
+       FROM booking_addons ba
+       JOIN add_ons a ON ba.addon_id = a.id
+       WHERE ba.booking_id = $1`,
+      [id]
+    )
+    
+    res.json({
+      ...booking,
+      addons: addonsRes.rows,
+      display_amount: booking.final_paid_amount || booking.total_price,
+      breakdown: booking.booking_breakdown
+    })
+  } catch (error) {
+    console.error('getBookingById error:', error)
+    res.status(500).json({ message: error.message })
+  }
+}
+
+const getBookedDates = async (req, res) => {
+  try {
+    const { car_id } = req.params
+ 
+    // Return all active/future booking ranges for this car so the frontend
+    // can block out those dates in the booking modal.
+    const result = await pool.query(
+      `SELECT pickup_datetime, dropoff_datetime
+       FROM bookings
+       WHERE car_id = $1
+         AND status NOT IN ('cancelled', 'completed')
+       ORDER BY pickup_datetime ASC`,
+      [car_id]
+    )
+ 
+    res.json(result.rows)
+  } catch (error) {
+    console.error('getBookedDates error:', error)
+    res.status(500).json({ message: error.message })
+  }
+}
+
+module.exports = { 
+  createBooking, 
+  getMyBookings, 
+  cancelBooking, 
+  validatePromo, 
+  getAllBookings,
+  updateBookingStatus,
+  getBookingById,
+  getBookedDates
+}

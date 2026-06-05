@@ -14,35 +14,35 @@ const getAllCars = async (req, res) => {
       pickup_datetime,
       dropoff_datetime,
       page = 1,
-      duration_type = 'daily',
-    } = req.query
+      duration_type = "daily",
+    } = req.query;
 
-    const limit = 6
-    const offset = (parseInt(page) - 1) * limit
+    const limit = parseInt(req.query.limit) || 6;
+    const offset = (parseInt(page) - 1) * limit;
 
-    let conditions = []
-    let values = []
-    let count = 1
+    let conditions = [];
+    let values = [];
+    let count = 1;
 
     if (location_id) {
-      conditions.push(`c.location_id = $${count++}`)
-      values.push(parseInt(location_id))
+      conditions.push(`c.location_id = $${count++}`);
+      values.push(parseInt(location_id));
     }
     if (category) {
-      conditions.push(`LOWER(c.category) = LOWER($${count++})`)
-      values.push(category)
+      conditions.push(`LOWER(c.category) = LOWER($${count++})`);
+      values.push(category);
     }
     if (transmission) {
-      conditions.push(`LOWER(c.transmission) = LOWER($${count++})`)
-      values.push(transmission)
+      conditions.push(`LOWER(c.transmission) = LOWER($${count++})`);
+      values.push(transmission);
     }
     if (fuel_type) {
-      conditions.push(`LOWER(c.fuel_type) = LOWER($${count++})`)
-      values.push(fuel_type)
+      conditions.push(`LOWER(c.fuel_type) = LOWER($${count++})`);
+      values.push(fuel_type);
     }
     if (seats) {
-      conditions.push(`c.seats = $${count++}`)
-      values.push(parseInt(seats))
+      conditions.push(`c.seats = $${count++}`);
+      values.push(parseInt(seats));
     }
     if (pickup_datetime && dropoff_datetime) {
       conditions.push(`
@@ -52,11 +52,11 @@ const getAllCars = async (req, res) => {
           AND pickup_datetime < $${count++}
           AND dropoff_datetime > $${count++}
         )
-      `)
-      values.push(dropoff_datetime, pickup_datetime)
+      `);
+      values.push(dropoff_datetime, pickup_datetime);
     }
 
-    // Price filter via EXISTS subquery — clean and reliable
+    // Price filter
     if (min_price && max_price) {
       conditions.push(`
         EXISTS (
@@ -66,8 +66,8 @@ const getAllCars = async (req, res) => {
           AND ps.price >= $${count++}
           AND ps.price <= $${count++}
         )
-      `)
-      values.push(duration_type, parseFloat(min_price), parseFloat(max_price))
+      `);
+      values.push(duration_type, parseFloat(min_price), parseFloat(max_price));
     } else if (min_price) {
       conditions.push(`
         EXISTS (
@@ -76,8 +76,8 @@ const getAllCars = async (req, res) => {
           AND ps.type = $${count++}
           AND ps.price >= $${count++}
         )
-      `)
-      values.push(duration_type, parseFloat(min_price))
+      `);
+      values.push(duration_type, parseFloat(min_price));
     } else if (max_price) {
       conditions.push(`
         EXISTS (
@@ -86,20 +86,20 @@ const getAllCars = async (req, res) => {
           AND ps.type = $${count++}
           AND ps.price <= $${count++}
         )
-      `)
-      values.push(duration_type, parseFloat(max_price))
+      `);
+      values.push(duration_type, parseFloat(max_price));
     }
 
-    const whereClause = conditions.length > 0
-      ? `AND ${conditions.join(' AND ')}`
-      : ''
+    const whereClause =
+      conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : "";
 
-    // duration_type param for display_price — always last added separately
-    const displayPriceParam = `$${count++}`
-    values.push(duration_type)
+    const displayPriceParam = `$${count++}`;
+    values.push(duration_type);
 
+    // ✅ FIX: Use DISTINCT ON to get exactly one row per car
     const baseQuery = `
-      SELECT c.*, 
+      SELECT DISTINCT ON (c.id) 
+        c.*, 
         l.name as location_name,
         ci.image_url as primary_image,
         ps_display.price as display_price
@@ -110,37 +110,38 @@ const getAllCars = async (req, res) => {
         ON ps_display.car_id = c.id AND ps_display.type = ${displayPriceParam}
       WHERE c.status IS NOT NULL
       ${whereClause}
-      GROUP BY c.id, l.name, ci.image_url, ps_display.price
-      ORDER BY c.created_at DESC
-    `
+      ORDER BY c.id, c.created_at DESC
+    `;
 
     const countResult = await pool.query(
       `SELECT COUNT(*) FROM (${baseQuery}) as total`,
-      values
-    )
-    const total = parseInt(countResult.rows[0].count)
-    const totalPages = Math.ceil(total / limit)
+      values,
+    );
+    const total = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(total / limit);
 
-    const paginatedQuery = `${baseQuery} LIMIT $${count++} OFFSET $${count++}`
-    values.push(limit, offset)
+    const paginatedQuery = `${baseQuery} LIMIT $${count++} OFFSET $${count++}`;
+    values.push(limit, offset);
 
-    const result = await pool.query(paginatedQuery, values)
+    const result = await pool.query(paginatedQuery, values);
+
+    console.log("✅ Backend - Page:", page, "Returned cars:", result.rows.length);
 
     res.json({
       cars: result.rows,
       total,
       page: parseInt(page),
       totalPages,
-    })
+    });
   } catch (error) {
-    console.error('getAllCars error:', error)
-    res.status(500).json({ message: error.message })
+    console.error("getAllCars error:", error);
+    res.status(500).json({ message: error.message });
   }
-}
+};
 
 const getCarById = async (req, res) => {
   try {
-    const { id } = req.params
+    const { id } = req.params;
 
     // ✅ FIX: Added primary_image from car_images table
     const car = await pool.query(
@@ -154,116 +155,151 @@ const getCarById = async (req, res) => {
        LEFT JOIN locations l ON c.location_id = l.id
        LEFT JOIN car_images ci ON ci.car_id = c.id AND ci.is_primary = true
        WHERE c.id = $1`,
-      [id]
-    )
+      [id],
+    );
 
     if (car.rows.length === 0) {
-      return res.status(404).json({ message: "Car not found" })
+      return res.status(404).json({ message: "Car not found" });
     }
 
-    const images   = await pool.query("SELECT * FROM car_images WHERE car_id = $1", [id])
-    const features = await pool.query("SELECT feature_name FROM car_features WHERE car_id = $1", [id])
-    const pricing  = await pool.query("SELECT * FROM pricing_slabs WHERE car_id = $1", [id])
+    const images = await pool.query(
+      "SELECT * FROM car_images WHERE car_id = $1",
+      [id],
+    );
+    const features = await pool.query(
+      "SELECT feature_name FROM car_features WHERE car_id = $1",
+      [id],
+    );
+    const pricing = await pool.query(
+      "SELECT * FROM pricing_slabs WHERE car_id = $1",
+      [id],
+    );
 
     res.json({
       ...car.rows[0],
       images: images.rows,
       features: features.rows,
       pricing: pricing.rows,
-    })
+    });
   } catch (error) {
-    console.error('getCarById error:', error)
-    res.status(500).json({ message: error.message })
+    console.error("getCarById error:", error);
+    res.status(500).json({ message: error.message });
   }
-}
+};
 
 const createCar = async (req, res) => {
   try {
-    const errors = validationResult(req)
+    const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() })
+      return res.status(400).json({ errors: errors.array() });
     }
 
     const {
-      location_id, make, model, year, category,
-      transmission, fuel_type, seats, description,
-    } = req.body
+      location_id,
+      make,
+      model,
+      year,
+      category,
+      transmission,
+      fuel_type,
+      seats,
+      description,
+    } = req.body;
 
     const result = await pool.query(
       `INSERT INTO cars (location_id, make, model, year, category, transmission, fuel_type, seats, description)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       [
-        location_id, make, model, year,
+        location_id,
+        make,
+        model,
+        year,
         category,
         transmission?.toLowerCase(),
         fuel_type?.toLowerCase(),
-        seats, description,
-      ]
-    )
+        seats,
+        description,
+      ],
+    );
 
-    res.status(201).json(result.rows[0])
+    res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('createCar error:', error)
-    res.status(500).json({ message: error.message })
+    console.error("createCar error:", error);
+    res.status(500).json({ message: error.message });
   }
-}
+};
 
 const updateCar = async (req, res) => {
   try {
-    const { id } = req.params
+    const { id } = req.params;
     const {
-      location_id, make, model, year, category,
-      transmission, fuel_type, seats, status, description,
-    } = req.body
+      location_id,
+      make,
+      model,
+      year,
+      category,
+      transmission,
+      fuel_type,
+      seats,
+      status,
+      description,
+    } = req.body;
 
     const result = await pool.query(
       `UPDATE cars SET location_id=$1, make=$2, model=$3, year=$4, category=$5, 
        transmission=$6, fuel_type=$7, seats=$8, status=$9, description=$10 
        WHERE id=$11 RETURNING *`,
       [
-        location_id, make, model, year,
+        location_id,
+        make,
+        model,
+        year,
         category,
         transmission?.toLowerCase(),
         fuel_type?.toLowerCase(),
-        seats, status, description, id,
-      ]
-    )
+        seats,
+        status,
+        description,
+        id,
+      ],
+    );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Car not found" })
+      return res.status(404).json({ message: "Car not found" });
     }
 
-    res.json(result.rows[0])
+    res.json(result.rows[0]);
   } catch (error) {
-    console.error('updateCar error:', error)
-    res.status(500).json({ message: error.message })
+    console.error("updateCar error:", error);
+    res.status(500).json({ message: error.message });
   }
-}
+};
 
 const deleteCar = async (req, res) => {
   try {
-    const { id } = req.params
-    await pool.query("DELETE FROM cars WHERE id = $1", [id])
-    res.json({ message: "Car deleted" })
+    const { id } = req.params;
+    await pool.query("DELETE FROM cars WHERE id = $1", [id]);
+    res.json({ message: "Car deleted" });
   } catch (error) {
-    console.error('deleteCar error:', error)
-    res.status(500).json({ message: error.message })
+    console.error("deleteCar error:", error);
+    res.status(500).json({ message: error.message });
   }
-}
+};
 
 const getSimilarCars = async (req, res) => {
   try {
-    const { id } = req.params
+    const { id } = req.params;
 
     const currentCar = await pool.query(
-      "SELECT category, location_id FROM cars WHERE id = $1", [id]
-    )
+      "SELECT category, location_id FROM cars WHERE id = $1",
+      [id],
+    );
 
     if (currentCar.rows.length === 0) {
-      return res.status(404).json({ message: "Car not found" })
+      return res.status(404).json({ message: "Car not found" });
     }
 
-    const { category, location_id } = currentCar.rows[0]
+    const { category, location_id } = currentCar.rows[0];
 
     const result = await pool.query(
       `SELECT c.*, 
@@ -284,14 +320,21 @@ const getSimilarCars = async (req, res) => {
               ELSE 3 END) ASC, 
         c.created_at DESC
       LIMIT 4`,
-      [id, category, location_id]
-    )
+      [id, category, location_id],
+    );
 
-    res.json(result.rows)
+    res.json(result.rows);
   } catch (error) {
-    console.error('getSimilarCars error:', error)
-    res.status(500).json({ message: error.message })
+    console.error("getSimilarCars error:", error);
+    res.status(500).json({ message: error.message });
   }
-}
+};
 
-module.exports = { getAllCars, getCarById, createCar, updateCar, deleteCar, getSimilarCars }
+module.exports = {
+  getAllCars,
+  getCarById,
+  createCar,
+  updateCar,
+  deleteCar,
+  getSimilarCars,
+};

@@ -80,7 +80,7 @@ const TableWrapper = styled.div`
 const Table = styled.table`
   width: 100%;
   border-collapse: collapse;
-  min-width: 900px;
+  min-width: 1200px;
 `
 
 const Th = styled.th`
@@ -158,14 +158,14 @@ const PaymentMethod = styled.div`
   margin-bottom: 4px;
 `
 
-const PaymentStatus = styled.span`
+const PaymentStatusBadge = styled.span`
   display: inline-block;
   padding: 2px 8px;
   border-radius: 12px;
   font-size: 11px;
   font-weight: 500;
-  background: ${props => props.$status === 'paid' ? '#dcfce7' : '#fef3c7'};
-  color: ${props => props.$status === 'paid' ? '#16a34a' : '#d97706'};
+  background: ${props => props.$status === 'paid' || props.$status === 'success' ? '#dcfce7' : '#fef3c7'};
+  color: ${props => props.$status === 'paid' || props.$status === 'success' ? '#16a34a' : '#d97706'};
 `
 
 const Amount = styled.span`
@@ -261,6 +261,80 @@ const BookingId = styled.span`
   border-radius: 6px;
 `
 
+const AddonsList = styled.div`
+  font-size: 11px;
+  
+  .base-rent {
+    color: #1a1c1c;
+    font-weight: 500;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed #e2e2e2;
+  }
+  
+  .addon-item {
+    display: flex;
+    justify-content: space-between;
+    margin: 3px 0;
+    gap: 8px;
+    padding-left: 8px;
+    
+    span:first-child {
+      color: #5f5e5e;
+      font-size: 11px;
+    }
+    
+    span:last-child {
+      color: #775a19;
+      font-weight: 500;
+      font-size: 11px;
+    }
+  }
+  
+  .promo-discount {
+    display: flex;
+    justify-content: space-between;
+    margin: 6px 0 3px;
+    gap: 8px;
+    padding-left: 8px;
+    color: #16a34a;
+    
+    span:first-child {
+      color: #5f5e5e;
+      font-size: 11px;
+    }
+    
+    span:last-child {
+      color: #16a34a;
+      font-weight: 600;
+      font-size: 11px;
+    }
+  }
+  
+  .total-paid {
+    margin-top: 6px;
+    padding-top: 4px;
+    border-top: 1px solid #e2e2e2;
+    display: flex;
+    justify-content: space-between;
+    font-weight: 600;
+    font-size: 12px;
+    
+    span:first-child {
+      color: #1a1c1c;
+    }
+    
+    span:last-child {
+      color: #775a19;
+    }
+  }
+`
+
+const AddonsEmpty = styled.span`
+  font-size: 11px;
+  color: #aaa;
+`
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 const formatDate = (iso) =>
@@ -296,6 +370,7 @@ const ManageBookings = () => {
       const params = new URLSearchParams({ page, limit: 20 })
       if (statusFilter) params.append('status', statusFilter)
       const res = await api.get(`/admin/bookings?${params}`)
+      console.log('Bookings data:', res.data.bookings[0])
       setBookings(res.data.bookings)
       setTotal(res.data.total)
       setTotalPages(res.data.totalPages)
@@ -364,56 +439,103 @@ const ManageBookings = () => {
                 <Th>Car</Th>
                 <Th>Pickup</Th>
                 <Th>Dropoff</Th>
-                <Th>Amount</Th>
+                <Th>Breakdown</Th>
                 <Th>Payment</Th>
                 <Th>Status</Th>
                 <Th>Update</Th>
               </tr>
             </thead>
             <tbody>
-              {bookings.map(b => (
-                <tr key={b.id}>
-                  <Td>
-                    <BookingId>#{b.id}</BookingId>
-                  </Td>
-                  <Td>
-                    <CustomerName>{b.user_name}</CustomerName>
-                    <CustomerEmail>{b.user_email}</CustomerEmail>
-                  </Td>
-                  <Td>
-                    <CarInfo>
-                      {b.make} {b.model} <CarYear>({b.year})</CarYear>
-                    </CarInfo>
-                  </Td>
-                  <Td>{formatDate(b.pickup_datetime)}</Td>
-                  <Td>{formatDate(b.dropoff_datetime)}</Td>
-                  <Td><Amount>{formatCurrency(b.total_price)}</Amount></Td>
-                  <Td>
-                    <PaymentMethod>{b.payment_method || '—'}</PaymentMethod>
-                    <PaymentStatus $status={b.payment_status}>
-                      {b.payment_status || 'pending'}
-                    </PaymentStatus>
-                  </Td>
-                  <Td>
-                    <StatusBadge $status={b.status}>
-                      {getStatusLabel(b.status)}
-                    </StatusBadge>
-                  </Td>
-                  <Td>
-                    <StatusSelect
-                      value={b.status}
-                      disabled={updatingId === b.id}
-                      onChange={e => handleStatusChange(b.id, e.target.value)}
-                    >
-                      {STATUSES.map(s => (
-                        <option key={s} value={s}>
-                          {getStatusLabel(s)}
-                        </option>
-                      ))}
-                    </StatusSelect>
-                  </Td>
-                </tr>
-              ))}
+              {bookings.map(b => {
+                const addons = Array.isArray(b.addons) ? b.addons : []
+                const paidAddons = addons.filter(a => {
+                  const price = a.price_at_time || a.price || 0
+                  return price > 0
+                })
+                
+                const baseRent = b.base_rent_amount || b.total_price || 0
+                const discountAmount = b.promo_discount || 0
+                const finalAmount = b.final_paid_amount || b.total_price || 0
+                const promoCodeUsed = b.promo_code_used
+                
+                const hasPromo = discountAmount > 0 && promoCodeUsed
+                
+                return (
+                  <tr key={b.id}>
+                    <Td>
+                      <BookingId>#{b.id}</BookingId>
+                    </Td>
+                    <Td>
+                      <CustomerName>{b.user_name}</CustomerName>
+                      <CustomerEmail>{b.user_email}</CustomerEmail>
+                    </Td>
+                    <Td>
+                      <CarInfo>
+                        {b.make} {b.model} <CarYear>({b.year})</CarYear>
+                      </CarInfo>
+                    </Td>
+                    <Td>{formatDate(b.pickup_datetime)}</Td>
+                    <Td>{formatDate(b.dropoff_datetime)}</Td>
+                    <Td>
+                      <AddonsList>
+                        <div className="base-rent">
+                          Car Rent: {formatCurrency(baseRent)}
+                        </div>
+                        {paidAddons.length > 0 && (
+                          <>
+                            {paidAddons.map((a, idx) => {
+                              const addonPrice = a.price_at_time || a.price || 0
+                              const addonName = a.addon_name || a.name || `Add-on #${a.addon_id || a.id}`
+                              return (
+                                <div key={idx} className="addon-item">
+                                  <span>• {addonName}</span>
+                                  <span>+{formatCurrency(addonPrice)}</span>
+                                </div>
+                              )
+                            })}
+                          </>
+                        )}
+                        {hasPromo && (
+                          <div className="promo-discount">
+                            <span>Promo Discount ({promoCodeUsed})</span>
+                            <span>-{formatCurrency(discountAmount)}</span>
+                          </div>
+                        )}
+                        <div className="total-paid">
+                          <span>Total Paid</span>
+                          <span>{formatCurrency(finalAmount)}</span>
+                        </div>
+                      </AddonsList>
+                    </Td>
+                    <Td>
+                      <PaymentMethod>
+                        {b.payment_method === 'cash' ? '💵 Cash' : '💳 Online'}
+                      </PaymentMethod>
+                      <PaymentStatusBadge $status={b.payment_status}>
+                        {b.payment_status === 'paid' || b.payment_status === 'success' ? 'Paid' : (b.payment_status || 'Pending')}
+                      </PaymentStatusBadge>
+                    </Td>
+                    <Td>
+                      <StatusBadge $status={b.status}>
+                        {getStatusLabel(b.status)}
+                      </StatusBadge>
+                    </Td>
+                    <Td>
+                      <StatusSelect
+                        value={b.status}
+                        disabled={updatingId === b.id}
+                        onChange={e => handleStatusChange(b.id, e.target.value)}
+                      >
+                        {STATUSES.map(s => (
+                          <option key={s} value={s}>
+                            {getStatusLabel(s)}
+                          </option>
+                        ))}
+                      </StatusSelect>
+                    </Td>
+                  </tr>
+                )
+              })}
             </tbody>
           </Table>
         )}
@@ -426,7 +548,7 @@ const ManageBookings = () => {
             >
               ← Prev
             </PageBtn>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+            {Array.from({ length: Math.min(totalPages, 10) }, (_, i) => i + 1).map(p => (
               <PageBtn
                 key={p}
                 $active={p === page}
@@ -435,6 +557,12 @@ const ManageBookings = () => {
                 {p}
               </PageBtn>
             ))}
+            {totalPages > 10 && <span style={{ padding: '0 8px', color: '#aaa' }}>...</span>}
+            {totalPages > 10 && (
+              <PageBtn onClick={() => setPage(totalPages)}>
+                {totalPages}
+              </PageBtn>
+            )}
             <PageBtn
               disabled={page === totalPages}
               onClick={() => setPage(p => p + 1)}

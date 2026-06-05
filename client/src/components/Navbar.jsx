@@ -393,7 +393,7 @@ const Navbar = () => {
         {/* Desktop Navigation */}
         <DesktopNav>
           <NavLink to="/cars">
-            <IconWrapper>🚗</IconWrapper> Inventory
+            <IconWrapper>🚗</IconWrapper> CARS
           </NavLink>
           
           {user ? (
@@ -435,7 +435,7 @@ const Navbar = () => {
         <DrawerCloseButton onClick={() => setIsMobileMenuOpen(false)}>✕</DrawerCloseButton>
         
         <DrawerLink to="/cars" onClick={() => setIsMobileMenuOpen(false)}>
-          <IconWrapper>🚗</IconWrapper> Inventory
+          <IconWrapper>🚗</IconWrapper> CARS
         </DrawerLink>
         
         {user ? (

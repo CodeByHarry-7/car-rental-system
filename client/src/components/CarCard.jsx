@@ -1,21 +1,20 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";  // ✅ ADD THIS
 import styled from "styled-components";
 import toast from "react-hot-toast";
 import { useWishlistContext } from "../context/WishlistContext";
 import { useAuth } from "../context/AuthContext";
+import { api } from "../context/AuthContext";
 import BookingModal from "./BookingModal";
 
-// Add this helper at the top of CarCard.jsx
 const fixCloudinaryUrl = (url) => {
-  if (!url) return null
-  if (url.includes('/upload/') && !url.includes('/upload/v')) {
-    return url.replace('/upload/', '/upload/v')
+  if (!url) return null;
+  if (url.includes("/upload/") && !url.includes("/upload/v")) {
+    return url.replace("/upload/", "/upload/v");
   }
-  return url
-}
+  return url;
+};
 
-// Then update getImageUrl:
-const getImageUrl = () => fixCloudinaryUrl(car.primary_image || car.image_url || null)
 const CardContainer = styled.div`
   background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(32px);
@@ -82,20 +81,12 @@ const WishlistButton = styled.button`
   transition: all 0.2s ease;
   border: none;
   cursor: pointer;
-  &:hover {
-    transform: scale(1.1);
-  }
-  &:active {
-    transform: scale(0.95);
-  }
-  span {
-    font-size: 1.25rem;
-  }
+  &:hover { transform: scale(1.1); }
+  &:active { transform: scale(0.95); }
+  span { font-size: 1.25rem; }
 `;
 
-const Content = styled.div`
-  padding: 1.5rem;
-`;
+const Content = styled.div`padding: 1.5rem;`;
 
 const Header = styled.div`
   display: flex;
@@ -121,9 +112,7 @@ const Model = styled.h3`
   color: #1a1c1c;
 `;
 
-const PriceContainer = styled.div`
-  text-align: right;
-`;
+const PriceContainer = styled.div`text-align: right;`;
 
 const PriceLabel = styled.p`
   font-family: "Inter", sans-serif;
@@ -196,118 +185,111 @@ const BookButton = styled.button`
     transform: scale(1.02);
     box-shadow: 0 8px 24px rgba(197, 160, 89, 0.3);
   }
-  &:active {
-    transform: scale(0.98);
-  }
+  &:active { transform: scale(0.98); }
 `;
 
 const DURATION_CONFIG = {
-  hourly: { suffix: "/hr", slabType: "hourly" },
-  daily: { suffix: "/day", slabType: "daily" },
+  hourly: { suffix: "/hr",   slabType: "hourly" },
+  daily:  { suffix: "/day",  slabType: "daily"  },
   weekly: { suffix: "/week", slabType: "weekly" },
 };
 
 const CarCard = ({ car, duration = "daily" }) => {
+  const navigate = useNavigate(); // ✅ ADD THIS
   const [showBookingModal, setShowBookingModal] = useState(false);
+  const [fullCar, setFullCar] = useState(null);
+  const [fetchingCar, setFetchingCar] = useState(false);
 
-  // ✅ Also pull `user` directly — isAuthenticated may be a derived value
-  // that's undefined during loading. Checking user directly is more reliable.
   const { isAuthenticated, user } = useAuth();
-  const { addToWishlist, removeFromWishlist, isWishlisted } =
-    useWishlistContext();
+  const { addToWishlist, removeFromWishlist, isWishlisted } = useWishlistContext();
 
   const wishlisted = isWishlisted(car.id);
-
-  // ✅ True if either isAuthenticated is truthy OR user object exists
   const loggedIn = !!(isAuthenticated || user);
 
   const handleWishlistClick = (e) => {
     e.stopPropagation();
-     if (!loggedIn) {
-    window.dispatchEvent(new CustomEvent('openAuthModal'))
-    return
-  }
-    const carName = `${car.brand || car.make} ${car.model}`;
-    if (wishlisted) {
-      removeFromWishlist(car.id);
-      toast.custom(
-        <div
-          style={{
-             marginTop: '50px',
-            background: "white",
-            padding: "12px 20px",
-            borderRadius: "12px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-            display: "flex",
-            gap: "12px",
-            alignItems: "center",
-          
-          }}
-        >
-          <span style={{ fontSize: "18px" }}>💔</span>
-          <span style={{ color: "#ef4444", fontWeight: "500" }}>
-            {carName} removed from wishlist
-          </span>
-        </div>,
-        { duration: 1000 },
-      );
-    } else {
-      addToWishlist(car);
-      toast.custom(
-        <div
-          style={{
-            marginTop: '50px',
-            background: "white",
-            padding: "12px 20px",
-            borderRadius: "12px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-            display: "flex",
-            gap: "12px",
-            alignItems: "center",
-          }}
-        >
-          <span style={{ fontSize: "18px" }}>❤️</span>
-          <span style={{ color: "#775a19", fontWeight: "500" }}>
-            {carName} added to wishlist!
-          </span>
-        </div>,
-        { duration: 1000 },
-      );
-    }
-  };
-
-  const handleBookNow = (e) => {
-    e.stopPropagation();
-    // ✅ Use loggedIn which checks both isAuthenticated and user object
     if (!loggedIn) {
       window.dispatchEvent(new CustomEvent("openAuthModal"));
       return;
     }
-    setShowBookingModal(true);
+    const carName = `${car.brand || car.make} ${car.model}`;
+    if (wishlisted) {
+      removeFromWishlist(car.id);
+      toast.custom(
+        <div style={{ marginTop: "50px", background: "white", padding: "12px 20px",
+          borderRadius: "12px", boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          display: "flex", gap: "12px", alignItems: "center" }}>
+          <span style={{ fontSize: "18px" }}>💔</span>
+          <span style={{ color: "#ef4444", fontWeight: "500" }}>{carName} removed from wishlist</span>
+        </div>,
+        { duration: 1000 }
+      );
+    } else {
+      addToWishlist(car);
+      toast.custom(
+        <div style={{ marginTop: "50px", background: "white", padding: "12px 20px",
+          borderRadius: "12px", boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          display: "flex", gap: "12px", alignItems: "center" }}>
+          <span style={{ fontSize: "18px" }}>❤️</span>
+          <span style={{ color: "#775a19", fontWeight: "500" }}>{carName} added to wishlist!</span>
+        </div>,
+        { duration: 1000 }
+      );
+    }
   };
 
+  const handleBookNow = async (e) => {
+    e.stopPropagation();
+    if (!loggedIn) {
+      window.dispatchEvent(new CustomEvent("openAuthModal"));
+      return;
+    }
+    if (!user?.licence_image) {
+      toast.error("Please upload your driving licence first to book a car", {
+        duration: 4000, icon: "📄",
+      });
+      return;
+    }
+
+    if (fullCar) {
+      setShowBookingModal(true);
+      return;
+    }
+
+    setFetchingCar(true);
+    try {
+      const res = await api.get(`/cars/${car.id}`);
+      setFullCar(res.data);
+      setShowBookingModal(true);
+    } catch {
+      setFullCar(car);
+      setShowBookingModal(true);
+    } finally {
+      setFetchingCar(false);
+    }
+  };
+
+  // ✅ FIX: Use React Router navigation instead of window.location
   const handleCardClick = () => {
-    // Store scroll position before navigation
-    sessionStorage.setItem("returnToTop", "true");
-    window.location.href = `/cars/${car.id}?duration_type=${duration}`;
+    sessionStorage.setItem("scrollToTop", "true");
+    navigate(`/cars/${car.id}?duration_type=${duration}`);
   };
 
-  // ✅ FIX: check primary_image first, then image_url
-  const getImageUrl = () => car.primary_image || car.image_url || null;
+  const getImageUrl = () =>
+    fixCloudinaryUrl(car.primary_image || car.image_url || null);
 
   const getPrice = () => {
     const config = DURATION_CONFIG[duration] || DURATION_CONFIG.daily;
-    if (car.display_price != null && car.display_price !== "")
-      return car.display_price;
+    if (car.display_price != null && car.display_price !== "") return car.display_price;
     if (Array.isArray(car.pricing) && car.pricing.length > 0) {
       const slab = car.pricing.find(
-        (p) => p.type?.toLowerCase() === config.slabType,
+        (p) => p.type?.toLowerCase() === config.slabType
       );
       if (slab?.price != null) return slab.price;
     }
     const legacyMap = {
       hourly: car.hourly_price,
-      daily: car.daily_price || car.price_per_day,
+      daily:  car.daily_price || car.price_per_day,
       weekly: car.weekly_price,
     };
     if (legacyMap[duration] != null) return legacyMap[duration];
@@ -318,33 +300,22 @@ const CarCard = ({ car, duration = "daily" }) => {
     (DURATION_CONFIG[duration] || DURATION_CONFIG.daily).suffix;
 
   const imageUrl = getImageUrl();
-  const price = getPrice();
-  const suffix = getDurationSuffix();
-  // Add this helper component inside CarCard.jsx (before the return statement)
+  const price    = getPrice();
+  const suffix   = getDurationSuffix();
+
   const CarImageWithFallback = ({ src, alt }) => {
     const [imgError, setImgError] = useState(false);
-
     if (imgError || !src) {
       return (
-        <div
-          style={{
-            width: "100%",
-            height: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "#f0f0f0",
-          }}
-        >
-          <span style={{ fontSize: "3rem", color: "#7f7667", opacity: 0.3 }}>
-            🚗
-          </span>
+        <div style={{ width: "100%", height: "100%", display: "flex",
+          alignItems: "center", justifyContent: "center", background: "#f0f0f0" }}>
+          <span style={{ fontSize: "3rem", color: "#7f7667", opacity: 0.3 }}>🚗</span>
         </div>
       );
     }
-
     return <CarImage src={src} alt={alt} onError={() => setImgError(true)} />;
   };
+
   return (
     <>
       <CardContainer onClick={handleCardClick}>
@@ -353,29 +324,6 @@ const CarCard = ({ car, duration = "daily" }) => {
             src={imageUrl}
             alt={`${car.brand || car.make} ${car.model}`}
           />
-          {imageUrl ? (
-            <CarImage
-              src={imageUrl}
-              alt={`${car.brand || car.make} ${car.model}`}
-            />
-          ) : (
-            <div
-              style={{
-                width: "100%",
-                height: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "#f0f0f0",
-              }}
-            >
-              <span
-                style={{ fontSize: "3rem", color: "#7f7667", opacity: 0.3 }}
-              >
-                🚗
-              </span>
-            </div>
-          )}
           <CategoryBadge>
             <span>{car.category || "Car"}</span>
           </CategoryBadge>
@@ -423,13 +371,15 @@ const CarCard = ({ car, duration = "daily" }) => {
             </FeatureItem>
           </FeaturesGrid>
 
-          <BookButton onClick={handleBookNow}>Book Now →</BookButton>
+          <BookButton onClick={handleBookNow} disabled={fetchingCar}>
+            {fetchingCar ? "Loading..." : "Book Now →"}
+          </BookButton>
         </Content>
       </CardContainer>
 
-      {showBookingModal && (
+      {showBookingModal && fullCar && (
         <BookingModal
-          car={car}
+          car={fullCar}
           duration={duration}
           onClose={() => setShowBookingModal(false)}
         />

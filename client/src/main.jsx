@@ -13,10 +13,9 @@ createRoot(document.getElementById('root')).render(
       <AuthProvider>
         <WishlistProvider>
           <App />
-                  <Toaster position="top-right" />
-
         </WishlistProvider>
       </AuthProvider>
     </BrowserRouter>
+    <Toaster position="top-right" />
   </StrictMode>
 )

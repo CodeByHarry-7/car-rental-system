@@ -36,41 +36,40 @@ const ErrorMessage = styled.div`
 
 const SimilarCars = ({ carId }) => {
   const [similarCars, setSimilarCars] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [loading, setLoading]         = useState(true)
+  const [error, setError]             = useState(null)
 
   useEffect(() => {
-    const fetchSimilar = async () => {
-      setLoading(true)
-      setError(null)
-      try {
-        const res = await axios.get(`http://localhost:5000/api/cars/${carId}/similar`)
-        setSimilarCars(res.data)
-      } catch (error) {
-        console.error("Error fetching similar cars:", error)
-        setError("Failed to load similar cars")
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    if (carId) {
-      fetchSimilar()
-    }
+    if (!carId) return
+    setLoading(true)
+    setError(null)
+    axios
+      .get(`http://localhost:5000/api/cars/${carId}/similar`)
+      .then(res => {
+        // Deduplicate by car id so React never gets two children with the same key
+        const seen = new Set()
+        const unique = (Array.isArray(res.data) ? res.data : []).filter(car => {
+          if (seen.has(car.id)) return false
+          seen.add(car.id)
+          return true
+        })
+        setSimilarCars(unique)
+      })
+      .catch(err => {
+        console.error('Error fetching similar cars:', err)
+        setError('Failed to load similar cars')
+      })
+      .finally(() => setLoading(false))
   }, [carId])
 
-  if (loading) {
-    return <SimilarCarsSkeleton />
-  }
+  if (loading) return <SimilarCarsSkeleton />
 
-  if (error) {
-    return (
-      <SimilarSection>
-        <Title>Similar Cars You Might Like</Title>
-        <ErrorMessage>{error}</ErrorMessage>
-      </SimilarSection>
-    )
-  }
+  if (error) return (
+    <SimilarSection>
+      <Title>Similar Cars You Might Like</Title>
+      <ErrorMessage>{error}</ErrorMessage>
+    </SimilarSection>
+  )
 
   if (similarCars.length === 0) return null
 
@@ -79,7 +78,9 @@ const SimilarCars = ({ carId }) => {
       <Title>Similar Cars You Might Like</Title>
       <Grid>
         {similarCars.map(car => (
-          <CarCard key={car.id} car={car} />
+          // key uses a string prefix so it is always unique even if the backend
+          // ever returns the same car id in two different rows
+          <CarCard key={`similar-car-${car.id}`} car={car} />
         ))}
       </Grid>
     </SimilarSection>

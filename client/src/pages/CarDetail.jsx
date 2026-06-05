@@ -611,39 +611,33 @@ useEffect(() => {
   const activePrice  = getPriceForDuration(selectedDuration);
   const activeSuffix = DURATION_CONFIG[selectedDuration].suffix;
 
-const handleWishlistToggle = () => {
-  // ✅ Check if user is logged in
-  if (!user) {
-    setShowAuth(true);
-    return;
-  }
-  
-  if (wishlisted) {
-    removeFromWishlist(car.id);
-    toast.custom(
-      <div style={{ background: "white", padding: "16px 24px", borderRadius: "10px",marginTop: '50px',
-        boxShadow: "0 4px 12px rgba(0,0,0,0.1)", display: "flex", gap: "12px", alignItems: "center" }}>
-        <span style={{ fontSize: "20px" }}>💔</span>
-        <span style={{ color: "#ef4444", fontWeight: "500" }}>
-          {car.make} {car.model} removed from wishlist
-        </span>
-      </div>,
-      { duration: 1500 }
-    );
-  } else {
-    addToWishlist(car);
-    toast.custom(
-      <div style={{ background: "white", padding: "16px 24px", borderRadius: "10px",marginTop: '50px',
-        boxShadow: "0 4px 12px rgba(0,0,0,0.1)", display: "flex", gap: "12px", alignItems: "center" }}>
-        <span style={{ fontSize: "20px" }}>❤️</span>
-        <span style={{ color: "#775a19", fontWeight: "500" }}>
-          {car.make} {car.model} added to wishlist!
-        </span>
-      </div>,
-      { duration: 1500 }
-    );
-  }
-};
+  const handleWishlistToggle = () => {
+    if (wishlisted) {
+      removeFromWishlist(car.id);
+      toast.custom(
+        <div style={{ background: "white", padding: "16px 24px", borderRadius: "10px",marginTop: '50px',
+          boxShadow: "0 4px 12px rgba(0,0,0,0.1)", display: "flex", gap: "12px", alignItems: "center" }}>
+          <span style={{ fontSize: "20px" }}>💔</span>
+          <span style={{ color: "#ef4444", fontWeight: "500" }}>
+            {car.make} {car.model} removed from wishlist
+          </span>
+        </div>,
+        { duration: 1500 }
+      );
+    } else {
+      addToWishlist(car);
+      toast.custom(
+        <div style={{ background: "white", padding: "16px 24px", borderRadius: "10px",marginTop: '50px',
+          boxShadow: "0 4px 12px rgba(0,0,0,0.1)", display: "flex", gap: "12px", alignItems: "center" }}>
+          <span style={{ fontSize: "20px" }}>❤️</span>
+          <span style={{ color: "#775a19", fontWeight: "500" }}>
+            {car.make} {car.model} added to wishlist!
+          </span>
+        </div>,
+        { duration: 1500 }
+      );
+    }
+  };
 
   const handleBookClick = () => {
     if (!user) {

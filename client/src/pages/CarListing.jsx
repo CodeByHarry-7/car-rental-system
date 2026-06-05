@@ -260,8 +260,6 @@ const PageButton = styled.button`
   }
 `;
 
-// ─── Constants ───────────────────────────────────────────────────────────────
-
 const PRICE_RANGES = {
   hourly: [
     { label: "Under ₹300", value: "0-300", min: "0", max: "300" },
@@ -299,24 +297,12 @@ const DURATION_LABELS = {
   weekly: "🗓 Weekly",
 };
 
-const categories = [
-  "SUV",
-  "Sedan",
-  "Hatchback",
-  "Luxury",
-  "Sports",
-  "Electric",
-];
+const categories = ["SUV", "Sedan", "Hatchback", "Luxury", "Sports", "Electric"];
 const transmissions = ["Manual", "Automatic"];
 const fuelTypes = ["Petrol", "Diesel", "Electric", "Hybrid", "CNG"];
 const seatOptions = [2, 4, 5, 7, 8];
 
-// Keys that must NEVER be merged from useFilters into our API params
-// because we manage them in local state to keep full control.
-const LOCAL_STATE_KEYS = new Set(["duration_type", "min_price", "max_price"]);
-
-// ─── Component ───────────────────────────────────────────────────────────────
-
+const LOCAL_STATE_KEYS = new Set(["duration_type"]);
 const CarListing = () => {
   const [cars, setCars] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -324,24 +310,25 @@ const CarListing = () => {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
 
-  // Duration and price live in local state — never in useFilters — so they
-  // always reflect what the user chose with zero round-trip uncertainty.
   const [currentDuration, setCurrentDuration] = useState("daily");
-  const [priceValue, setPriceValue] = useState(""); // e.g. "300-600"
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
+  const [priceValue, setPriceValue] = useState("");
 
   const { filters, setFilter, setPage, clearFilters } = useFilters();
 
+  const currentPage = Number(filters.page) || 1;
+
   useEffect(() => {
     fetchLocations();
+    if (!filters.page) {
+      setPage(1);
+    }
   }, []);
 
-  // Re-fetch whenever other filters, duration, or price change.
   useEffect(() => {
+    console.log("🔄 Filters changed! Fetching cars...");
+    console.log("Current filters:", filters);
     fetchCars();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(filters), currentDuration, minPrice, maxPrice]);
+  }, [filters.location_id, filters.category, filters.transmission, filters.fuel_type, filters.seats, filters.min_price, filters.max_price, filters.page, currentDuration]);
 
   const fetchLocations = async () => {
     try {
@@ -355,46 +342,47 @@ const CarListing = () => {
   const fetchCars = async () => {
     setLoading(true);
     try {
-      // Start with duration_type — this must always be present and correct.
       const params = { duration_type: currentDuration };
 
-      // Merge filters from useFilters, but SKIP any key we own locally so
-      // a stale value in the hook can never overwrite our local state.
       Object.entries(filters).forEach(([key, value]) => {
-        if (LOCAL_STATE_KEYS.has(key)) return; // ← key guard
+        if (LOCAL_STATE_KEYS.has(key)) return;
         if (value !== "" && value !== undefined && value !== null) {
           params[key] = value;
         }
       });
 
-      // Attach price params from local state (already validated on selection)
-      if (minPrice !== "") params.min_price = minPrice;
-      if (maxPrice !== "") params.max_price = maxPrice;
+      params.page = currentPage;
+      params.sort_by = "created_at";
+      params.order = "desc";
+
+      console.log("🔍 Fetching cars with params:", params);
 
       const res = await axios.get("http://localhost:5000/api/cars", { params });
-      console.log("First car image debug:", {
-        primary_image: res.data.cars[0]?.primary_image,
-        image_url: res.data.cars[0]?.image_url,
-        full_car: res.data.cars[0],
-      });
-      setCars(res.data.cars);
+
+      const carsData = res.data.cars || [];
+      const uniqueCars = carsData.filter(
+        (car, index, self) =>
+          index === self.findIndex((c) => String(c.id) === String(car.id)),
+      );
+
+      setCars(uniqueCars);
       setTotal(res.data.total);
       setTotalPages(res.data.totalPages);
+
+      if (currentPage > res.data.totalPages && res.data.totalPages > 0) {
+        setPage(res.data.totalPages);
+      }
     } catch (err) {
-      console.error(err);
+      console.error("❌ fetchCars error:", err);
     } finally {
       setLoading(false);
     }
   };
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
-
   const handleDurationChange = (value) => {
     setCurrentDuration(value);
-    // Clear price selection — price ranges differ per duration
     setPriceValue("");
-    setMinPrice("");
-    setMaxPrice("");
+    setFilter("duration_type", value);
   };
 
   const handlePriceChange = (e) => {
@@ -404,11 +392,11 @@ const CarListing = () => {
 
     setPriceValue(val);
     if (!selected || val === "") {
-      setMinPrice("");
-      setMaxPrice("");
+      setFilter("min_price", "");
+      setFilter("max_price", "");
     } else {
-      setMinPrice(selected.min);
-      setMaxPrice(selected.max);
+      setFilter("min_price", selected.min);
+      setFilter("max_price", selected.max);
     }
   };
 
@@ -416,15 +404,9 @@ const CarListing = () => {
     clearFilters();
     setCurrentDuration("daily");
     setPriceValue("");
-    setMinPrice("");
-    setMaxPrice("");
   };
 
-  // ── Derived UI state ───────────────────────────────────────────────────────
-
-  const activePriceRange = (
-    PRICE_RANGES[currentDuration] || PRICE_RANGES.daily
-  ).find((r) => r.value === priceValue);
+  const activePriceRange = (PRICE_RANGES[currentDuration] || PRICE_RANGES.daily).find((r) => r.value === priceValue);
 
   const activeTags = [
     filters.location_id && {
@@ -432,23 +414,20 @@ const CarListing = () => {
       label: `📍 ${locations.find((l) => String(l.id) === String(filters.location_id))?.name || "Location"}`,
     },
     filters.category && { key: "category", label: `🚗 ${filters.category}` },
-    filters.transmission && {
-      key: "transmission",
-      label: `⚙️ ${filters.transmission}`,
-    },
+    filters.transmission && { key: "transmission", label: `⚙️ ${filters.transmission}` },
     filters.fuel_type && { key: "fuel_type", label: `⛽ ${filters.fuel_type}` },
     filters.seats && { key: "seats", label: `👥 ${filters.seats} Seats` },
-    activePriceRange && {
+    (filters.min_price || filters.max_price) && {
       key: "price",
-      label: `💰 ${activePriceRange.label} (${DURATION_LABELS[currentDuration]})`,
+      label: `💰 ₹${filters.min_price || "0"} - ₹${filters.max_price || "∞"} (${DURATION_LABELS[currentDuration]})`,
     },
   ].filter(Boolean);
 
   const removeTag = (key) => {
     if (key === "price") {
       setPriceValue("");
-      setMinPrice("");
-      setMaxPrice("");
+      setFilter("min_price", "");
+      setFilter("max_price", "");
     } else {
       setFilter(key, "");
     }
@@ -457,26 +436,19 @@ const CarListing = () => {
   const activeFilterCount = activeTags.length;
   const hasActiveFilters = activeFilterCount > 0;
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   return (
     <PageContainer>
       <Main>
         <Header>
           <Title>Available Cars</Title>
-          <ResultCount>
-            {total} {total === 1 ? "car" : "cars"} found
-          </ResultCount>
+          <ResultCount>{total} {total === 1 ? "car" : "cars"} found</ResultCount>
         </Header>
 
         <FilterSection>
           <FilterRow>
-            {/* ── Duration ── */}
+            {/* Duration Select */}
             <FilterChip>
-              <DurationSelect
-                value={currentDuration}
-                onChange={(e) => handleDurationChange(e.target.value)}
-              >
+              <DurationSelect value={currentDuration} onChange={(e) => handleDurationChange(e.target.value)}>
                 <option value="hourly">⏱ Hourly</option>
                 <option value="daily">📅 Daily</option>
                 <option value="weekly">🗓 Weekly</option>
@@ -484,125 +456,80 @@ const CarListing = () => {
               <DurationIcon>▼</DurationIcon>
             </FilterChip>
 
-            {/* ── Location ── */}
+            {/* Location */}
             <FilterChip>
-              <FilterSelect
-                $active={!!filters.location_id}
-                value={filters.location_id || ""}
-                onChange={(e) => setFilter("location_id", e.target.value)}
-              >
+              <FilterSelect $active={!!filters.location_id} value={filters.location_id || ""} onChange={(e) => setFilter("location_id", e.target.value)}>
                 <option value="">📍 All Locations</option>
                 {locations.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    📍 {loc.name}
-                  </option>
+                  <option key={loc.id} value={loc.id}>📍 {loc.name}</option>
                 ))}
               </FilterSelect>
               <SelectIcon $active={!!filters.location_id}>▼</SelectIcon>
               {filters.location_id && <ActiveBadge>✓</ActiveBadge>}
             </FilterChip>
 
-            {/* ── Category ── */}
+            {/* Category */}
             <FilterChip>
-              <FilterSelect
-                $active={!!filters.category}
-                value={filters.category || ""}
-                onChange={(e) => setFilter("category", e.target.value)}
-              >
+              <FilterSelect $active={!!filters.category} value={filters.category || ""} onChange={(e) => setFilter("category", e.target.value)}>
                 <option value="">🚗 All Categories</option>
                 {categories.map((cat) => (
-                  <option key={cat} value={cat}>
-                    🚗 {cat}
-                  </option>
+                  <option key={cat} value={cat}>🚗 {cat}</option>
                 ))}
               </FilterSelect>
               <SelectIcon $active={!!filters.category}>▼</SelectIcon>
               {filters.category && <ActiveBadge>✓</ActiveBadge>}
             </FilterChip>
 
-            {/* ── Transmission ── */}
+            {/* Transmission */}
             <FilterChip>
-              <FilterSelect
-                $active={!!filters.transmission}
-                value={filters.transmission || ""}
-                onChange={(e) => setFilter("transmission", e.target.value)}
-              >
+              <FilterSelect $active={!!filters.transmission} value={filters.transmission || ""} onChange={(e) => setFilter("transmission", e.target.value)}>
                 <option value="">⚙️ Transmission</option>
                 {transmissions.map((t) => (
-                  <option key={t} value={t}>
-                    ⚙️ {t}
-                  </option>
+                  <option key={t} value={t}>⚙️ {t}</option>
                 ))}
               </FilterSelect>
               <SelectIcon $active={!!filters.transmission}>▼</SelectIcon>
               {filters.transmission && <ActiveBadge>✓</ActiveBadge>}
             </FilterChip>
 
-            {/* ── Fuel Type ── */}
+            {/* Fuel Type */}
             <FilterChip>
-              <FilterSelect
-                $active={!!filters.fuel_type}
-                value={filters.fuel_type || ""}
-                onChange={(e) => setFilter("fuel_type", e.target.value)}
-              >
+              <FilterSelect $active={!!filters.fuel_type} value={filters.fuel_type || ""} onChange={(e) => setFilter("fuel_type", e.target.value)}>
                 <option value="">⛽ Fuel Type</option>
                 {fuelTypes.map((f) => (
-                  <option key={f} value={f}>
-                    ⛽ {f}
-                  </option>
+                  <option key={f} value={f}>⛽ {f}</option>
                 ))}
               </FilterSelect>
               <SelectIcon $active={!!filters.fuel_type}>▼</SelectIcon>
               {filters.fuel_type && <ActiveBadge>✓</ActiveBadge>}
             </FilterChip>
 
-            {/* ── Seats ── */}
+            {/* Seats */}
             <FilterChip>
-              <FilterSelect
-                $active={!!filters.seats}
-                value={filters.seats || ""}
-                onChange={(e) => setFilter("seats", e.target.value)}
-              >
+              <FilterSelect $active={!!filters.seats} value={filters.seats || ""} onChange={(e) => setFilter("seats", e.target.value)}>
                 <option value="">👥 Seats</option>
                 {seatOptions.map((s) => (
-                  <option key={s} value={s}>
-                    👥 {s} Seats
-                  </option>
+                  <option key={s} value={s}>👥 {s} Seats</option>
                 ))}
               </FilterSelect>
               <SelectIcon $active={!!filters.seats}>▼</SelectIcon>
               {filters.seats && <ActiveBadge>✓</ActiveBadge>}
             </FilterChip>
 
-            {/* ── Price Range ──
-                key={currentDuration} forces a full re-mount when duration
-                changes so the <select> visually resets to the placeholder. */}
+            {/* Price */}
             <FilterChip>
-              <FilterSelect
-                key={currentDuration}
-                $active={!!activePriceRange}
-                value={priceValue}
-                onChange={handlePriceChange}
-              >
-                <option value="">
-                  💰 Price Range ({DURATION_LABELS[currentDuration]})
-                </option>
-                {(PRICE_RANGES[currentDuration] || PRICE_RANGES.daily).map(
-                  (r) => (
-                    <option key={r.value} value={r.value}>
-                      💰 {r.label}
-                    </option>
-                  ),
-                )}
+              <FilterSelect key={currentDuration} $active={!!activePriceRange} value={priceValue} onChange={handlePriceChange}>
+                <option value="">💰 Price Range ({DURATION_LABELS[currentDuration]})</option>
+                {(PRICE_RANGES[currentDuration] || PRICE_RANGES.daily).map((r) => (
+                  <option key={r.value} value={r.value}>💰 {r.label}</option>
+                ))}
               </FilterSelect>
               <SelectIcon $active={!!activePriceRange}>▼</SelectIcon>
               {activePriceRange && <ActiveBadge>✓</ActiveBadge>}
             </FilterChip>
 
             {hasActiveFilters && (
-              <ClearButton onClick={handleClearAll}>
-                Clear All ({activeFilterCount})
-              </ClearButton>
+              <ClearButton onClick={handleClearAll}>Clear All ({activeFilterCount})</ClearButton>
             )}
           </FilterRow>
 
@@ -617,6 +544,7 @@ const CarListing = () => {
             </ActiveFiltersBar>
           )}
         </FilterSection>
+
 
         {loading ? (
           <GridSkeleton>
@@ -662,10 +590,8 @@ const CarListing = () => {
             {totalPages > 1 && (
               <PaginationContainer>
                 <PageButton
-                  onClick={() =>
-                    setPage(Math.max(1, parseInt(filters.page) - 1))
-                  }
-                  disabled={parseInt(filters.page) === 1}
+                  onClick={() => setPage(Math.max(1, currentPage - 1))}
+                  disabled={currentPage === 1}
                 >
                   ← Previous
                 </PageButton>
@@ -675,7 +601,7 @@ const CarListing = () => {
                   return (
                     <PageButton
                       key={pageNum}
-                      $active={parseInt(filters.page) === pageNum}
+                      $active={currentPage === pageNum}
                       onClick={() => setPage(pageNum)}
                     >
                       {pageNum}
@@ -691,10 +617,8 @@ const CarListing = () => {
                 )}
 
                 <PageButton
-                  onClick={() =>
-                    setPage(Math.min(totalPages, parseInt(filters.page) + 1))
-                  }
-                  disabled={parseInt(filters.page) === totalPages}
+                  onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
+                  disabled={currentPage === totalPages}
                 >
                   Next →
                 </PageButton>

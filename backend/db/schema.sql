@@ -9,6 +9,14 @@ CREATE TABLE IF NOT EXISTS users (
     licence_image TEXT,
     aadhar_no VARCHAR(50) UNIQUE,
     aadhar_image TEXT,
+
+    date_of_birth DATE,
+    licence_expiry DATE,
+    is_email_verified BOOLEAN DEFAULT false,
+    otp_code VARCHAR(6),
+    otp_expires_at TIMESTAMPTZ,
+    driver_status VARCHAR(20) DEFAULT 'unverified',
+    licence_rejected_reason TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -88,6 +96,7 @@ CREATE TABLE IF NOT EXISTS promo_codes (
   used_count INT DEFAULT 0,
   expiry TIMESTAMPTZ,
   is_active BOOLEAN DEFAULT true
+  start_date TIMESTAMPTZ DEFAULT NOW(),
 );
 
 CREATE TABLE IF NOT EXISTS wishlists (

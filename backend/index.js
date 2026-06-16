@@ -11,6 +11,8 @@ const wishlistRoutes = require('./routes/wishlistRoutes')
 const bookingRoutes = require('./routes/bookingRoutes')
 const reviewRoutes = require('./routes/reviewRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const authRoutes = require('./routes/authRoutes')
+const { startReminderCron } = require('./cron/bookingReminder');
 
 require("dotenv").config();
 
@@ -23,8 +25,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }))
 app.use(express.json());
+startReminderCron();
 
-const authRoutes = require("./routes/authRoutes");
 app.use("/api/auth", authRoutes);
 require("./config/db");
 
